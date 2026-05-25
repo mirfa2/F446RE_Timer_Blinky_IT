@@ -57,6 +57,11 @@ static void MX_TIM1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+	//eg: Timer_Clock = 180 MHz / 18000-1	= 10 kHz 	->  1 count/tick lasts 100 us
+	//	  Counter_Frequency = 10 khz / 65536-1 = 0.1526 Hz, ARR = 65536 counts -> meaning a Period is 6.55s
+
+uint16_t timer_value;	//16bit var cause 16bit timer
+
 /* USER CODE END 0 */
 
 /**
@@ -91,6 +96,13 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
+
+	  //start timer, start counting to ARR
+	  HAL_TIM_Base_Start(&htim1);
+	  //get current time (in us)
+	  timer_value = __HAL_TIM_GET_COUNTER(&htim1);
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -100,6 +112,15 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+	  //use timer to blink led every 1s, 10000*100us = 1s
+	  if(__HAL_TIM_GET_COUNTER(&htim1)-timer_value >= 10000)
+	  {
+		  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+		  timer_value = __HAL_TIM_GET_COUNTER(&htim1);	//update timestamp
+	  }
+
+
   }
   /* USER CODE END 3 */
 }
@@ -176,7 +197,7 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 1800-1;
+  htim1.Init.Prescaler = 18000-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim1.Init.Period = 65536-1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;

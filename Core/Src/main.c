@@ -61,6 +61,45 @@ static void MX_TIM1_Init(void);
 	//	  Counter_Frequency = 10 khz / 65536-1 = 0.1526 Hz, ARR = 65536 counts -> meaning a Period is 6.55s
 
 uint16_t timer_value;	//16bit var cause 16bit timer
+int periodCount=0;
+int halfCount=0;
+uint32_t half_period = 65536/2;	//_HAL_TIM_GET_AUTORELOAD(&htim1) / 2;
+
+//callback when timer finished a period or timer triggered dma finish the transfer
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	//any timer can trigger this callback, so we need to select which timer
+	if(htim == &htim1)
+	{
+		HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_8); //red LED
+		periodCount++;
+	}
+}
+
+
+//half complete callback is triggered when you use timer to trigger dma transfer
+//and the transfer is half complete, NOT when timer is at half period. Timer in interrupt cant trigger this.
+//void HAL_TIM_PeriodElapsedHalfCpltCallback(TIM_HandleTypeDef *htim)
+//{
+//	if(htim == &htim1)
+//	{
+//		//wanted to trigger this at half period but this isnt the way. left this here for note
+//		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);	//blue LEd at pb5
+//		halfCount++;
+//	}
+//}
+
+//to toggle the other led at half period we can use channel 1, Output Compare No Output mode
+//No Output so it stays internal. Set the compare register of channel 1, CCR1 to half period (ARR/2)
+//DONT FORGER TO ENABLE TIMER OC INTERRUPT!!!
+void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM1 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)
+    {
+        // This fires exactly at the halfway mark!
+		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);	//blue LEd at pb5,D4
+		halfCount++;
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -97,10 +136,20 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
 
-	  //start timer, start counting to ARR
-	  HAL_TIM_Base_Start(&htim1);
+
+	  //Start the Base timer interrupt (Enables the Update Event for the end of period)
+	  HAL_TIM_Base_Start_IT(&htim1);
 	  //get current time (in us)
 	  timer_value = __HAL_TIM_GET_COUNTER(&htim1);
+
+	  //Start the Output Compare interrupt (Enables the CCR1 Event for the halfway point)
+	  //TIM1->CCR1=32768;	//set compare register to half period
+	  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, half_period);
+	  HAL_TIM_OC_Start_IT(&htim1, TIM_CHANNEL_1);
+
+
+
+
 
 
   /* USER CODE END 2 */
@@ -113,12 +162,15 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+
 	  //use timer to blink led every 1s, 10000*100us = 1s
 	  if(__HAL_TIM_GET_COUNTER(&htim1)-timer_value >= 10000)
 	  {
 		  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 		  timer_value = __HAL_TIM_GET_COUNTER(&htim1);	//update timestamp
 	  }
+//using timer to blick LED is non-blocking, unlike when using HAL_Delay, so we can execute
+//more instructions here in between the led blink. We can also do things in timer callbacks
 
 
   }
@@ -192,6 +244,8 @@ static void MX_TIM1_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
   /* USER CODE BEGIN TIM1_Init 1 */
 
@@ -212,9 +266,35 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
+  if (HAL_TIM_OC_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_OC_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
   {
     Error_Handler();
   }
@@ -239,9 +319,13 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5|GPIO_PIN_8, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : PA5 PA8 */
   GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_8;
@@ -249,6 +333,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
